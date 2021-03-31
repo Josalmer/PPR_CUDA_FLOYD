@@ -44,8 +44,9 @@ __global__ void reduceMax(int * V_in, int * V_out, const int N) {
 	extern __shared__ int sdata[];
 
 	int tid = threadIdx.x;
-	int i = blockIdx.x * blockDim.x + threadIdx.x;
+	int i = blockIdx.x * (blockDim.x * 2) + threadIdx.x;
 	sdata[tid] = ((i < N) ? V_in[i] : -1);
+	sdata[tid] = (((i + blockDim.x) < N) && V_in[i] < V_in[i + blockDim.x] ? V_in[i + blockDim.x] : sdata[tid]);
 	__syncthreads();
 
 	for(int s = blockDim.x/2; s > 0; s >>= 1) {
@@ -56,8 +57,9 @@ __global__ void reduceMax(int * V_in, int * V_out, const int N) {
 	  }
 	  __syncthreads();
 	}
-	if (tid == 0) 
-           V_out[blockIdx.x] = sdata[0];
+	if (tid == 0) {
+		V_out[blockIdx.x] = sdata[0];
+	}
 }
 
 int main(int argc, char *argv[])
@@ -173,7 +175,7 @@ int main(int argc, char *argv[])
 
 	// c_d Minimum computation on GPU
 	dim3 threadsPerBlock(blocksize);
-	dim3 numBlocks( ceil ((float)(nverts2)/threadsPerBlock.x));
+	dim3 numBlocks( ceil ((float)(nverts2 / 2)/threadsPerBlock.x));
 
 	// Maximum vector on CPU
 	int * vmax;
