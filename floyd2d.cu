@@ -24,6 +24,7 @@ double cpuSecond()
 }
 
 //**************************************************************************
+// FLOYD 2D BLOCKS
 __global__ void floyd_kernel(int *M, const int nverts, const int k) {
 	int j = threadIdx.x + blockDim.x * blockIdx.x;
 	int i = threadIdx.y + blockDim.y * blockIdx.y;
@@ -35,6 +36,28 @@ __global__ void floyd_kernel(int *M, const int nverts, const int k) {
 			M[index] = (Mij > Mikj) ? Mikj : Mij;
 		}
 	}
+}
+
+//**************************************************************************
+// FIND MAX IN VECTOR
+__global__ void reduceMax(int * V_in, int * V_out, const int N) {
+	extern __shared__ int sdata[];
+
+	int tid = threadIdx.x;
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+	sdata[tid] = ((i < N) ? V_in[i] : -1);
+	__syncthreads();
+
+	for(int s = blockDim.x/2; s > 0; s >>= 1) {
+	  if (tid < s) {
+		if(sdata[tid] < sdata[tid+s]) {
+                    sdata[tid] = sdata[tid+s];	
+		}
+	  }
+	  __syncthreads();
+	}
+	if (tid == 0) 
+           V_out[blockIdx.x] = sdata[0];
 }
 
 int main(int argc, char *argv[])
@@ -146,4 +169,34 @@ int main(int argc, char *argv[])
 		for (int j = 0; j < nverts; j++)
 			if (abs(c_Out_M[i * nverts + j] - G.arista(i, j)) > 0)
 				cout << "Error (" << i << "," << j << ")   " << c_Out_M[i * nverts + j] << "..." << G.arista(i, j) << endl;
+
+
+	// c_d Minimum computation on GPU
+	dim3 threadsPerBlock(blocksize);
+	dim3 numBlocks( ceil ((float)(nverts2)/threadsPerBlock.x));
+
+	// Maximum vector on CPU
+	int * vmax;
+	vmax = (int*) malloc(numBlocks.x*sizeof(int));
+
+	// Maximum vector  to be computed on GPU
+	int *vmax_d; 
+	cudaMalloc ((void **) &vmax_d, sizeof(int)*numBlocks.x);
+
+	int smemSize = threadsPerBlock.x*sizeof(int);
+
+	// Kernel launch to compute Minimum Vector
+	reduceMax<<<numBlocks, threadsPerBlock, smemSize>>>(c_Out_M,vmax_d, nverts2);
+
+
+	/* Copy data from device memory to host memory */
+	cudaMemcpy(vmax, vmax_d, numBlocks.x*sizeof(int),cudaMemcpyDeviceToHost);
+
+	// Perform final reduction in CPU
+	int max_gpu = -1;
+	for (int i=0; i<numBlocks.x; i++) {
+		max_gpu =max(max_gpu,vmax[i]);
+	}
+
+	cout << endl << " Camino más largo entre los caminos mínimos = " << max_gpu << endl;
 }
