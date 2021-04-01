@@ -173,7 +173,7 @@ int main(int argc, char *argv[])
 				cout << "Error (" << i << "," << j << ")   " << c_Out_M[i * nverts + j] << "..." << G.arista(i, j) << endl;
 
 
-	// c_d Minimum computation on GPU
+	// c_d Maximum computation on GPU
 	dim3 threadsPerBlock(blocksize);
 	dim3 numBlocks( ceil ((float)(nverts2 / 2)/threadsPerBlock.x));
 
