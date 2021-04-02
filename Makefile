@@ -8,7 +8,7 @@ GENCODE_SM60    := -gencode arch=compute_60,code=sm_60
 GENCODE_SMXX    := -gencode arch=compute_70,code=compute_70
 GENCODE_FLAGS   ?= $(GENCODE_SM30) $(GENCODE_SM35) $(GENCODE_SM35) $(GENCODE_SM50) $(GENCODE_SM60) $(GENCODE_SMXX)
 
-floyd: floyd.cu Graph.cc Graph.h
+floyd: floyd2d.cu Graph.cc Graph.h
 	nvcc -I./includes  -O3 -m64   $(GENCODE_FLAGS)   floyd2d.cu Graph.cc -o floyd
 
 clean:

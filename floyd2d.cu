@@ -44,21 +44,28 @@ __global__ void reduceMax(int * V_in, int * V_out, const int N) {
 	extern __shared__ int sdata[];
 
 	int tid = threadIdx.x;
+	int mid = blockDim.x/2;
 	int i = blockIdx.x * (blockDim.x * 2) + threadIdx.x;
 	sdata[tid] = ((i < N) ? V_in[i] : -1);
-	sdata[tid] = (((i + blockDim.x) < N) && V_in[i] < V_in[i + blockDim.x] ? V_in[i + blockDim.x] : sdata[tid]);
+	sdata[tid + blockDim.x] = ((i + blockDim.x) < N ? V_in[i + blockDim.x] : -1);
 	__syncthreads();
 
-	for(int s = blockDim.x/2; s > 0; s >>= 1) {
+	for(int s = mid; s > 0; s >>= 1) {
 	  if (tid < s) {
-		if(sdata[tid] < sdata[tid+s]) {
-                    sdata[tid] = sdata[tid+s];	
+		if(sdata[tid] < sdata[tid + s]) {
+			sdata[tid] = sdata[tid + s];
+		}
+	  } else if((i + blockDim.x + s) < N) {
+		if(sdata[tid + mid] < sdata[tid + mid + s]) {
+			sdata[tid + mid] = sdata[tid + mid + s];
 		}
 	  }
 	  __syncthreads();
 	}
 	if (tid == 0) {
-		V_out[blockIdx.x] = sdata[0];
+		V_out[blockIdx.x * 2] = sdata[0];
+	} else if (tid == mid) {
+		V_out[(blockIdx.x * 2) + 1] = sdata[tid + mid];
 	}
 }
 
@@ -115,8 +122,7 @@ int main(int argc, char *argv[])
 		cout << "ERROR COPIA A GPU" << endl;
 	}
 
-	for (int k = 0; k < niters; k++)
-	{
+	for (int k = 0; k < niters; k++) {
 		//printf("CUDA kernel launch \n");
 		int threadsPerDim = sqrt(blocksize);
 		dim3 threadsPerBlock (threadsPerDim, threadsPerDim);
@@ -128,8 +134,7 @@ int main(int argc, char *argv[])
 		floyd_kernel<<<numBlocks, threadsPerBlock>>>(d_In_M, nverts, k);
 		err = cudaGetLastError();
 
-		if (err != cudaSuccess)
-		{
+		if (err != cudaSuccess) {
 			fprintf(stderr, "Failed to launch kernel! ERROR= %d\n", err);
 			exit(EXIT_FAILURE);
 		}
@@ -185,7 +190,7 @@ int main(int argc, char *argv[])
 	int *vmax_d; 
 	cudaMalloc ((void **) &vmax_d, sizeof(int)*numBlocks.x);
 
-	int smemSize = threadsPerBlock.x*sizeof(int);
+	int smemSize = 2*threadsPerBlock.x*sizeof(int);
 
 	// Kernel launch to compute Minimum Vector
 	reduceMax<<<numBlocks, threadsPerBlock, smemSize>>>(c_Out_M,vmax_d, nverts2);
@@ -196,7 +201,7 @@ int main(int argc, char *argv[])
 
 	// Perform final reduction in CPU
 	int max_gpu = -1;
-	for (int i=0; i<numBlocks.x; i++) {
+	for (int i=0; i<numBlocks.x * 2; i++) {
 		max_gpu =max(max_gpu,vmax[i]);
 	}
 
