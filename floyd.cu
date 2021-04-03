@@ -24,7 +24,8 @@ double cpuSecond()
 }
 
 //**************************************************************************
-__global__ void floyd_kernel(int *M, const int nverts, const int k)
+// FLOYD 1D BLOCKS
+__global__ void floyd_1d(int *M, const int nverts, const int k)
 {
 	int ij = threadIdx.x + blockDim.x * blockIdx.x;
 	if (ij < nverts * nverts)
@@ -38,6 +39,52 @@ __global__ void floyd_kernel(int *M, const int nverts, const int k)
 			Mij = (Mij > Mikj) ? Mikj : Mij;
 			M[ij] = Mij;
 		}
+	}
+}
+
+//**************************************************************************
+// FLOYD 2D BLOCKS
+__global__ void floyd_kernel(int *M, const int nverts, const int k) {
+	int j = threadIdx.x + blockDim.x * blockIdx.x;
+	int i = threadIdx.y + blockDim.y * blockIdx.y;
+	int index = i * nverts + j;
+	if (i < nverts && j < nverts) {
+		int Mij = M[index];
+		if (i != j && i != k && j != k) {
+			int Mikj = M[i * nverts + k] + M[k * nverts + j];
+			M[index] = (Mij > Mikj) ? Mikj : Mij;
+		}
+	}
+}
+
+//**************************************************************************
+// FIND MAX IN VECTOR
+__global__ void reduceMax(int * V_in, int * V_out, const int N) {
+	extern __shared__ int sdata[];
+
+	int tid = threadIdx.x;
+	int mid = blockDim.x/2;
+	int i = blockIdx.x * (blockDim.x * 2) + threadIdx.x;
+	sdata[tid] = ((i < N) ? V_in[i] : -1);
+	sdata[tid + blockDim.x] = ((i + blockDim.x) < N ? V_in[i + blockDim.x] : -1);
+	__syncthreads();
+
+	for(int s = mid; s > 0; s >>= 1) {
+	  if (tid < s) {
+		if(sdata[tid] < sdata[tid + s]) {
+			sdata[tid] = sdata[tid + s];
+		}
+	  } else if((i + blockDim.x + s) < N) {
+		if(sdata[tid + mid] < sdata[tid + mid + s]) {
+			sdata[tid + mid] = sdata[tid + mid + s];
+		}
+	  }
+	  __syncthreads();
+	}
+	if (tid == 0) {
+		V_out[blockIdx.x * 2] = sdata[0];
+	} else if (tid == mid) {
+		V_out[(blockIdx.x * 2) + 1] = sdata[tid + mid];
 	}
 }
 
@@ -94,17 +141,19 @@ int main(int argc, char *argv[])
 		cout << "ERROR COPIA A GPU" << endl;
 	}
 
-	for (int k = 0; k < niters; k++)
-	{
+	for (int k = 0; k < niters; k++) {
 		//printf("CUDA kernel launch \n");
-		int threadsPerBlock = blocksize;
-		int blocksPerGrid = (nverts2 + threadsPerBlock - 1) / threadsPerBlock;
+		int threadsPerDim = sqrt(blocksize);
+		dim3 threadsPerBlock (threadsPerDim, threadsPerDim);
+		dim3 numBlocks(
+			ceil((float)nverts/threadsPerBlock.x),
+			ceil((float)nverts/threadsPerBlock.y)
+		);
 
-		floyd_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_In_M, nverts, k);
+		floyd_kernel<<<numBlocks, threadsPerBlock>>>(d_In_M, nverts, k);
 		err = cudaGetLastError();
 
-		if (err != cudaSuccess)
-		{
+		if (err != cudaSuccess) {
 			fprintf(stderr, "Failed to launch kernel! ERROR= %d\n", err);
 			exit(EXIT_FAILURE);
 		}
@@ -146,4 +195,34 @@ int main(int argc, char *argv[])
 		for (int j = 0; j < nverts; j++)
 			if (abs(c_Out_M[i * nverts + j] - G.arista(i, j)) > 0)
 				cout << "Error (" << i << "," << j << ")   " << c_Out_M[i * nverts + j] << "..." << G.arista(i, j) << endl;
+
+
+	// c_d Maximum computation on GPU
+	dim3 threadsPerBlock(blocksize);
+	dim3 numBlocks( ceil ((float)(nverts2 / 2)/threadsPerBlock.x));
+
+	// Maximum vector on CPU
+	int * vmax;
+	vmax = (int*) malloc(2*numBlocks.x*sizeof(int));
+
+	// Maximum vector  to be computed on GPU
+	int *vmax_d; 
+	cudaMalloc ((void **) &vmax_d, sizeof(int)*2*numBlocks.x);
+
+	int smemSize = 2*threadsPerBlock.x*sizeof(int);
+
+	// Kernel launch to compute Minimum Vector
+	reduceMax<<<numBlocks, threadsPerBlock, smemSize>>>(c_Out_M,vmax_d, nverts2);
+
+
+	/* Copy data from device memory to host memory */
+	cudaMemcpy(vmax, vmax_d, 2*numBlocks.x*sizeof(int),cudaMemcpyDeviceToHost);
+
+	// Perform final reduction in CPU
+	int max_gpu = -1;
+	for (int i=0; i<numBlocks.x * 2; i++) {
+		max_gpu =max(max_gpu,vmax[i]);
+	}
+
+	cout << endl << " Camino más largo entre los caminos mínimos = " << max_gpu << endl;
 }
